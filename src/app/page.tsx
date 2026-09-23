@@ -28,7 +28,7 @@ import {
   Terminal,
 } from 'lucide-react';
 import { PACE_RATES, ComputeRate, calculateRateDelta, getRateForPartition } from '@/lib/rates';
-import { SlurmPartitionNode, DEMO_SINFO_OUTPUT, parseSinfoOutput } from '@/lib/slurm-parser';
+import { SlurmPartitionNode, parseSinfoOutput } from '@/lib/slurm-parser';
 
 type FilterType = 'all' | 'available' | 'gpu-only' | 'cpu-only';
 type TabType = 'availability' | 'calculator' | 'rate-sheet' | 'help';
@@ -64,9 +64,8 @@ export default function PaceDashboard() {
 
   // Cluster data states
   const [partitions, setPartitions] = useState<SlurmPartitionNode[]>([]);
-  const [isConnected, setIsConnected] = useState<boolean>(true);
-  const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [rawTerminalOutput, setRawTerminalOutput] = useState<string>('');
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -99,54 +98,20 @@ export default function PaceDashboard() {
 
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
-  const enableDemoMode = () => {
-    setIsDemoMode(true);
-    setIsConnected(true);
-    setConnectionError(null);
-    setPartitions(parseSinfoOutput(DEMO_SINFO_OUTPUT));
-    setRawTerminalOutput(DEMO_SINFO_OUTPUT);
-    setLastUpdated(`${new Date().toLocaleTimeString()} (Demo)`);
-  };
-
-  const exitDemoMode = () => {
-    setIsDemoMode(false);
-    setIsConnected(false);
-    setPartitions([]);
-    setRawTerminalOutput('');
-    setLastUpdated(null);
-    setConnectionError('Demo Mode disabled. In static deployment, open the PACE Open OnDemand Shell or your terminal, copy the sinfo command, and click "Paste Output".');
-  };
-
-  const toggleDemoMode = () => {
-    if (isDemoMode) {
-      exitDemoMode();
-    } else {
-      enableDemoMode();
-    }
-  };
-
   const handleRefresh = () => {
     setIsLoading(true);
     setTimeout(() => {
-      if (isDemoMode) {
-        setPartitions(parseSinfoOutput(DEMO_SINFO_OUTPUT));
-        setRawTerminalOutput(DEMO_SINFO_OUTPUT);
-        setLastUpdated(`${new Date().toLocaleTimeString()} (Demo)`);
-      } else if (rawTerminalOutput) {
-        setPartitions(parseSinfoOutput(rawTerminalOutput));
-        setLastUpdated(`${new Date().toLocaleTimeString()} (Manual Paste)`);
+      if (rawTerminalOutput.trim()) {
+        const parsed = parseSinfoOutput(rawTerminalOutput);
+        setPartitions(parsed);
+        setIsConnected(true);
+        setLastUpdated(`${new Date().toLocaleTimeString()} (Refreshed)`);
       } else {
-        setIsConnected(false);
-        setConnectionError('To refresh live data, please paste updated sinfo output or toggle Demo Mode.');
+        setIsPasteModalOpen(true);
       }
       setIsLoading(false);
     }, 300);
   };
-
-  // Initial fetch on mount only (no background polling)
-  useEffect(() => {
-    enableDemoMode();
-  }, []);
 
   const handleManualPasteSubmit = () => {
     if (!pasteInputText.trim()) return;
@@ -154,9 +119,8 @@ export default function PaceDashboard() {
     setPartitions(parsed);
     setRawTerminalOutput(pasteInputText);
     setIsConnected(true);
-    setIsDemoMode(false);
     setConnectionError(null);
-    setLastUpdated(`${new Date().toLocaleTimeString()} (Manual Paste)`);
+    setLastUpdated(`${new Date().toLocaleTimeString()}`);
     setIsPasteModalOpen(false);
   };
 
@@ -280,49 +244,39 @@ ${sbatchCommand}
 
         <div className="header-actions">
           {/* Status badge */}
-          {isConnected ? (
-            <div className={`status-pill ${isDemoMode ? 'demo' : 'connected'}`}>
+          {isConnected && partitions.length > 0 ? (
+            <div className="status-pill connected">
               <div className="pulse-dot" />
-              <span>{isDemoMode ? 'Demo Mode' : 'Live Output Loaded'}</span>
+              <span>Live Output Loaded ({partitions.length} Queues)</span>
             </div>
           ) : (
             <div className="status-pill disconnected">
               <div className="pulse-dot" />
-              <span>Offline / No Data</span>
+              <span>Awaiting sinfo Output</span>
             </div>
           )}
 
-          {/* Action: Manual Refresh (only queries on click) */}
-          <button
-            id="refresh-btn"
-            className="btn btn-primary"
-            onClick={handleRefresh}
-            disabled={isLoading}
-            title="Queries sinfo via SSH or cached paste on-demand"
-          >
-            <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
-            <span>{isLoading ? 'Checking...' : 'Refresh Status'}</span>
-          </button>
-
-          {/* Action: Paste Output */}
+          {/* Action: Paste Output (Primary Action) */}
           <button
             id="paste-output-btn"
-            className="btn btn-secondary"
+            className="btn btn-primary"
             onClick={() => setIsPasteModalOpen(true)}
-            title="Paste raw sinfo command output"
+            title="Paste raw sinfo command output from PACE Phoenix"
           >
             <FileText size={16} />
             <span>Paste Output</span>
           </button>
 
-          {/* Action: Demo Mode Toggle */}
+          {/* Action: Manual Refresh (only queries on click) */}
           <button
-            id="toggle-demo-btn"
-            className={`btn ${isDemoMode ? 'btn-gold-outline' : 'btn-secondary'}`}
-            onClick={toggleDemoMode}
+            id="refresh-btn"
+            className="btn btn-secondary"
+            onClick={handleRefresh}
+            disabled={isLoading}
+            title="Refresh or re-parse output"
           >
-            <Sparkles size={16} />
-            <span>{isDemoMode ? 'Exit Demo' : 'Demo Mode'}</span>
+            <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
+            <span>{isLoading ? 'Checking...' : 'Refresh Status'}</span>
           </button>
         </div>
       </header>
@@ -332,40 +286,32 @@ ${sbatchCommand}
         <section className="alert-banner">
           <div className="alert-banner-content">
             <div className="alert-icon">
-              <ShieldAlert size={26} />
+              <FileText size={26} />
             </div>
             <div className="alert-text">
-              <h3>PACE Phoenix Cluster Data Not Loaded</h3>
+              <h3>Awaiting PACE Phoenix Cluster Telemetry</h3>
               <p>
-                You have exited Demo Mode. To view live availability, connect to <strong>Georgia Tech VPN</strong>, run the SLURM command in your PACE shell, and click <strong>Paste Output</strong>. Or re-enable Demo Mode anytime.
+                To view live partition availability and compute rates, run the SLURM command in your PACE shell or Open OnDemand web terminal, then click <strong>Paste Output</strong>:
               </p>
               <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: '0.8rem', padding: '6px 14px' }}
+                  onClick={() => setIsPasteModalOpen(true)}
+                >
+                  <FileText size={14} />
+                  <span>Paste sinfo Output</span>
+                </button>
                 <a
                   href="https://ondemand-phoenix.pace.gatech.edu/pun/sys/shell/ssh/login-phoenix.pace.gatech.edu"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="btn btn-primary"
+                  className="btn btn-secondary"
                   style={{ fontSize: '0.8rem', padding: '6px 12px' }}
                 >
                   <ExternalLink size={14} />
-                  <span>Open PACE OnDemand Web Shell</span>
+                  <span>Open PACE OnDemand Shell</span>
                 </a>
-                <button
-                  className="btn btn-secondary"
-                  style={{ fontSize: '0.8rem', padding: '6px 12px' }}
-                  onClick={enableDemoMode}
-                >
-                  <Sparkles size={14} />
-                  <span>Enter Demo Mode</span>
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  style={{ fontSize: '0.8rem', padding: '6px 12px' }}
-                  onClick={() => setIsPasteModalOpen(true)}
-                >
-                  <FileText size={14} />
-                  <span>Paste sinfo Output Manually</span>
-                </button>
               </div>
             </div>
           </div>
@@ -538,22 +484,18 @@ ${sbatchCommand}
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
                         <Server size={36} color="var(--text-muted)" style={{ opacity: 0.5 }} />
                         <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                          {isDemoMode ? 'No partitions matching current filter' : 'Demo Mode Disabled — No Partition Data'}
+                          {partitions.length === 0 ? 'No Cluster Partition Data Loaded' : 'No partitions matching current filter'}
                         </div>
                         <p style={{ fontSize: '0.85rem', maxWidth: '480px', margin: '0 auto', color: 'var(--text-muted)' }}>
-                          {isDemoMode
-                            ? 'Try switching to another filter or clearing your search.'
-                            : 'You have exited Demo Mode. Paste your live sinfo terminal output to view real-time availability, or restore Demo Mode anytime.'}
+                          {partitions.length === 0
+                            ? 'Run the SLURM command in your PACE terminal and click "Paste Output" to populate real-time queue availability.'
+                            : 'Try switching to another filter or clearing your search query.'}
                         </p>
-                        {!isDemoMode && (
-                          <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-                            <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '6px 14px' }} onClick={() => setIsPasteModalOpen(true)}>
+                        {partitions.length === 0 && (
+                          <div style={{ marginTop: '8px' }}>
+                            <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '6px 16px' }} onClick={() => setIsPasteModalOpen(true)}>
                               <FileText size={14} />
                               <span>Paste sinfo Output</span>
-                            </button>
-                            <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 14px' }} onClick={enableDemoMode}>
-                              <Sparkles size={14} />
-                              <span>Restore Demo Data</span>
                             </button>
                           </div>
                         )}

@@ -82,18 +82,3 @@ export function parseSinfoOutput(rawOutput: string): SlurmPartitionNode[] {
 
   return parsedNodes;
 }
-
-export const DEMO_SINFO_OUTPUT = `PARTITION             CPUS       MEMORY     NODES(A/I/O/T)
-gpu-v100              24+        191000+    4/2/0/6
-gpu-rtx6000           24         191000     8/12/0/20
-gpu-a100              64         515000     15/4/0/19
-gpu-h100              96         1000000    7/1/0/8
-gpu-h200              96         1000000    3/1/0/4
-gpu-l40s              64         515000     6/10/0/16
-gpu-rtxpro-blackwell  64         515000     1/3/0/4
-cpu-small*            24         191000     46/14/2/62
-cpu-medium            48         384000     22/8/0/30
-cpu-large             96         768000     13/2/1/16
-cpu-sas               48         384000     5/5/0/10
-cpu-amd               64         256000     18/14/0/32
-cpu-gnr               128        1024000    4/8/0/12`;
