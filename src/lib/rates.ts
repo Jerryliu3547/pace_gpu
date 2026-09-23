@@ -211,3 +211,32 @@ export function calculateRateDelta(current: number, future: number) {
     isUnchanged: Math.abs(diff) <= 0.00001,
   };
 }
+
+/**
+ * Returns default CPU core allocation ratio per GPU unit for PACE Phoenix cluster.
+ * - H100, H200, RTX Pro Blackwell: 8 CPU cores per 1 GPU
+ * - L40S: 4 CPU cores per 1 GPU
+ * - Quadro RTX 6000: 6 CPU cores per 1 GPU
+ * - A100: 8 CPU cores per 1 GPU
+ * - V100: 6 CPU cores per 1 GPU
+ */
+export function getCoresPerGpu(partitionName: string): number {
+  const p = (partitionName || '').toLowerCase().trim();
+  if (p.includes('h100') || p.includes('h200') || p.includes('blackwell') || p.includes('rtxpro')) {
+    return 8;
+  }
+  if (p.includes('l40s') || p.includes('l40')) {
+    return 4;
+  }
+  if (p.includes('rtx6000') || p.includes('quadro')) {
+    return 6;
+  }
+  if (p.includes('a100')) {
+    return 8;
+  }
+  if (p.includes('v100')) {
+    return 6;
+  }
+  return 8;
+}
+

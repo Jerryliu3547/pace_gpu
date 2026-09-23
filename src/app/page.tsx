@@ -27,7 +27,7 @@ import {
   RotateCcw,
   Terminal,
 } from 'lucide-react';
-import { PACE_RATES, ComputeRate, calculateRateDelta, getRateForPartition } from '@/lib/rates';
+import { PACE_RATES, ComputeRate, calculateRateDelta, getRateForPartition, getCoresPerGpu } from '@/lib/rates';
 import { SlurmPartitionNode, parseSinfoOutput } from '@/lib/slurm-parser';
 
 type FilterType = 'all' | 'available' | 'gpu-only' | 'cpu-only';
@@ -121,6 +121,24 @@ export default function PaceDashboard() {
     } catch (err) {
       console.error('Failed to copy to clipboard', err);
       window.open(PACE_SHELL_URL, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  const handlePartitionChange = (newPartition: string, units: number = calcUnits) => {
+    setCalcPartition(newPartition);
+    const rate = PACE_RATES.find((r) => r.partition === newPartition);
+    if (rate && rate.type === 'GPU') {
+      const cores = getCoresPerGpu(newPartition) * units;
+      setSbatchCores(cores);
+    }
+  };
+
+  const handleUnitsChange = (newUnits: number) => {
+    setCalcUnits(newUnits);
+    const rate = PACE_RATES.find((r) => r.partition === calcPartition);
+    if (rate && rate.type === 'GPU') {
+      const cores = getCoresPerGpu(calcPartition) * newUnits;
+      setSbatchCores(cores);
     }
   };
 
@@ -758,7 +776,7 @@ ${sbatchCommand}
                             className="btn btn-secondary"
                             style={{ fontSize: '0.75rem', padding: '4px 10px' }}
                             onClick={() => {
-                              setCalcPartition(item.cleanPartition);
+                              handlePartitionChange(item.cleanPartition);
                               setActiveTab('calculator');
                             }}
                           >
@@ -838,7 +856,7 @@ ${sbatchCommand}
                 <select
                   className="calc-select"
                   value={calcPartition}
-                  onChange={(e) => setCalcPartition(e.target.value)}
+                  onChange={(e) => handlePartitionChange(e.target.value)}
                 >
                   <optgroup label="GPU Nodes">
                     {PACE_RATES.filter((r) => r.type === 'GPU').map((rate) => (
@@ -866,7 +884,7 @@ ${sbatchCommand}
                     max={64}
                     className="calc-input"
                     value={calcUnits}
-                    onChange={(e) => setCalcUnits(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    onChange={(e) => handleUnitsChange(Math.max(1, parseInt(e.target.value, 10) || 1))}
                   />
                 </div>
 
@@ -885,7 +903,14 @@ ${sbatchCommand}
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div className="calc-input-group">
-                  <label>CPU Cores per Node (-n)</label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <label style={{ margin: 0 }}>CPU Cores per Node (-n)</label>
+                    {selectedRate.type === 'GPU' && (
+                      <span style={{ fontSize: '0.72rem', color: 'var(--gt-gold)', fontWeight: 600 }}>
+                        {getCoresPerGpu(calcPartition)} cores/GPU
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="number"
                     min={1}
@@ -894,6 +919,28 @@ ${sbatchCommand}
                     value={sbatchCores}
                     onChange={(e) => setSbatchCores(Math.max(1, parseInt(e.target.value, 10) || 1))}
                   />
+                  {selectedRate.type === 'GPU' && (
+                    <div className="input-chip-group">
+                      <button
+                        type="button"
+                        className={`chip-btn ${sbatchCores === getCoresPerGpu(calcPartition) * calcUnits ? 'active' : ''}`}
+                        onClick={() => setSbatchCores(getCoresPerGpu(calcPartition) * calcUnits)}
+                        title={`Reset to default allocation for ${calcUnits} GPU(s)`}
+                      >
+                        Auto: {getCoresPerGpu(calcPartition) * calcUnits}c
+                      </button>
+                      {[4, 6, 8, 16, 32].map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          className={`chip-btn ${sbatchCores === c ? 'active' : ''}`}
+                          onClick={() => setSbatchCores(c)}
+                        >
+                          {c}c
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="calc-input-group">
@@ -1182,7 +1229,7 @@ ${sbatchCommand}
                 return (
                   <div
                     key={gpu.id}
-                    onClick={() => setCalcPartition(gpu.partition)}
+                    onClick={() => handlePartitionChange(gpu.partition)}
                     style={{
                       background: isSelected ? 'rgba(234, 170, 0, 0.12)' : 'var(--bg-card-accent)',
                       border: `1px solid ${isSelected ? 'var(--gt-gold)' : 'var(--border-subtle)'}`,
