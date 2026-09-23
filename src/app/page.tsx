@@ -61,31 +61,54 @@ export default function PaceDashboard() {
 
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
-  // Initial fetch on mount only (no background polling)
-  useEffect(() => {
-    fetchClusterStatus(true);
-  }, []);
-
-  const fetchClusterStatus = async (forceDemo: boolean = true) => {
-    setIsLoading(true);
+  const enableDemoMode = () => {
+    setIsDemoMode(true);
+    setIsConnected(true);
     setConnectionError(null);
+    setPartitions(parseSinfoOutput(DEMO_SINFO_OUTPUT));
+    setRawTerminalOutput(DEMO_SINFO_OUTPUT);
+    setLastUpdated(`${new Date().toLocaleTimeString()} (Demo)`);
+  };
 
-    // Parse cluster data directly on client
+  const exitDemoMode = () => {
+    setIsDemoMode(false);
+    setIsConnected(false);
+    setPartitions([]);
+    setRawTerminalOutput('');
+    setLastUpdated(null);
+    setConnectionError('Demo Mode disabled. In static deployment, open the PACE Open OnDemand Shell or your terminal, copy the sinfo command, and click "Paste Output".');
+  };
+
+  const toggleDemoMode = () => {
+    if (isDemoMode) {
+      exitDemoMode();
+    } else {
+      enableDemoMode();
+    }
+  };
+
+  const handleRefresh = () => {
+    setIsLoading(true);
     setTimeout(() => {
-      if (forceDemo || isDemoMode) {
-        setIsConnected(true);
-        setIsDemoMode(true);
+      if (isDemoMode) {
         setPartitions(parseSinfoOutput(DEMO_SINFO_OUTPUT));
         setRawTerminalOutput(DEMO_SINFO_OUTPUT);
-        setLastUpdated(new Date().toLocaleTimeString());
+        setLastUpdated(`${new Date().toLocaleTimeString()} (Demo)`);
+      } else if (rawTerminalOutput) {
+        setPartitions(parseSinfoOutput(rawTerminalOutput));
+        setLastUpdated(`${new Date().toLocaleTimeString()} (Manual Paste)`);
       } else {
-        // If not in demo and not pasted, prompt for connection / manual paste
         setIsConnected(false);
-        setConnectionError('Direct SSH execution is not supported in static browser environments. Please use Manual Paste or Open OnDemand shell.');
+        setConnectionError('To refresh live data, please paste updated sinfo output or toggle Demo Mode.');
       }
       setIsLoading(false);
-    }, 400);
+    }, 300);
   };
+
+  // Initial fetch on mount only (no background polling)
+  useEffect(() => {
+    enableDemoMode();
+  }, []);
 
   const handleManualPasteSubmit = () => {
     if (!pasteInputText.trim()) return;
@@ -94,6 +117,7 @@ export default function PaceDashboard() {
     setRawTerminalOutput(pasteInputText);
     setIsConnected(true);
     setIsDemoMode(false);
+    setConnectionError(null);
     setLastUpdated(`${new Date().toLocaleTimeString()} (Manual Paste)`);
     setIsPasteModalOpen(false);
   };
@@ -183,12 +207,12 @@ nvidia-smi 2>/dev/null || lscpu
           {isConnected ? (
             <div className={`status-pill ${isDemoMode ? 'demo' : 'connected'}`}>
               <div className="pulse-dot" />
-              <span>{isDemoMode ? 'Demo Mode' : 'Connected to Phoenix'}</span>
+              <span>{isDemoMode ? 'Demo Mode' : 'Live Output Loaded'}</span>
             </div>
           ) : (
             <div className="status-pill disconnected">
               <div className="pulse-dot" />
-              <span>Off-VPN / Not Logged In</span>
+              <span>Offline / No Data</span>
             </div>
           )}
 
@@ -196,9 +220,9 @@ nvidia-smi 2>/dev/null || lscpu
           <button
             id="refresh-btn"
             className="btn btn-primary"
-            onClick={() => fetchClusterStatus(isDemoMode)}
+            onClick={handleRefresh}
             disabled={isLoading}
-            title="Queries sinfo via SSH on-demand"
+            title="Queries sinfo via SSH or cached paste on-demand"
           >
             <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
             <span>{isLoading ? 'Checking...' : 'Refresh Status'}</span>
@@ -219,11 +243,7 @@ nvidia-smi 2>/dev/null || lscpu
           <button
             id="toggle-demo-btn"
             className={`btn ${isDemoMode ? 'btn-gold-outline' : 'btn-secondary'}`}
-            onClick={() => {
-              const nextMode = !isDemoMode;
-              setIsDemoMode(nextMode);
-              fetchClusterStatus(nextMode);
-            }}
+            onClick={toggleDemoMode}
           >
             <Sparkles size={16} />
             <span>{isDemoMode ? 'Exit Demo' : 'Demo Mode'}</span>
@@ -239,9 +259,9 @@ nvidia-smi 2>/dev/null || lscpu
               <ShieldAlert size={26} />
             </div>
             <div className="alert-text">
-              <h3>PACE Phoenix Cluster Unreachable via SSH</h3>
+              <h3>PACE Phoenix Cluster Data Not Loaded</h3>
               <p>
-                To fetch live data directly, your machine must be connected to the <strong>Georgia Tech VPN</strong> and have an authorized SSH key configured for <code>login-phoenix.pace.gatech.edu</code>.
+                You have exited Demo Mode. To view live availability, connect to <strong>Georgia Tech VPN</strong>, run the SLURM command in your PACE shell, and click <strong>Paste Output</strong>. Or re-enable Demo Mode anytime.
               </p>
               <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 <a
@@ -257,13 +277,10 @@ nvidia-smi 2>/dev/null || lscpu
                 <button
                   className="btn btn-secondary"
                   style={{ fontSize: '0.8rem', padding: '6px 12px' }}
-                  onClick={() => {
-                    setIsDemoMode(true);
-                    fetchClusterStatus(true);
-                  }}
+                  onClick={enableDemoMode}
                 >
                   <Sparkles size={14} />
-                  <span>Preview with Demo Cluster Data</span>
+                  <span>Enter Demo Mode</span>
                 </button>
                 <button
                   className="btn btn-secondary"
@@ -441,8 +458,30 @@ nvidia-smi 2>/dev/null || lscpu
               <tbody>
                 {filteredPartitions.length === 0 ? (
                   <tr>
-                    <td colSpan={9} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
-                      No matching partitions found. Click "Refresh Status" or switch filters.
+                    <td colSpan={9} style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                        <Server size={36} color="var(--text-muted)" style={{ opacity: 0.5 }} />
+                        <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          {isDemoMode ? 'No partitions matching current filter' : 'Demo Mode Disabled — No Partition Data'}
+                        </div>
+                        <p style={{ fontSize: '0.85rem', maxWidth: '480px', margin: '0 auto', color: 'var(--text-muted)' }}>
+                          {isDemoMode
+                            ? 'Try switching to another filter or clearing your search.'
+                            : 'You have exited Demo Mode. Paste your live sinfo terminal output to view real-time availability, or restore Demo Mode anytime.'}
+                        </p>
+                        {!isDemoMode && (
+                          <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+                            <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '6px 14px' }} onClick={() => setIsPasteModalOpen(true)}>
+                              <FileText size={14} />
+                              <span>Paste sinfo Output</span>
+                            </button>
+                            <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 14px' }} onClick={enableDemoMode}>
+                              <Sparkles size={14} />
+                              <span>Restore Demo Data</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ) : (
