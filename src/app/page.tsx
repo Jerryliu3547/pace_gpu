@@ -98,7 +98,31 @@ export default function PaceDashboard() {
     'python experiments/gsm8k/train_full_finetune.py \\\n  --model_name_or_path meta-llama/Llama-3.2-1B \\\n  --dataset gsm8k'
   );
 
+  const PACE_SHELL_URL = 'https://ondemand-phoenix.pace.gatech.edu/pun/sys/shell/ssh/login-phoenix.pace.gatech.edu';
+  const SINFO_CHECK_CMD = `sinfo -o "%20P %10c %10m %25F" | grep -E '^PARTITION|^gpu'`;
+  const SQUEUE_CHECK_CMD = `squeue -h -t PENDING -p gpu-v100,gpu-a100,gpu-h100,gpu-h200,gpu-l40s,gpu-rtx6000,gpu-rtxpro-blackwell -o "%P" | tr ',' '\\n' | sort | uniq -c | sort -rn`;
+
+  const [shellToast, setShellToast] = useState<{ active: boolean; title: string; cmd: string } | null>(null);
+
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+
+  const handleOpenShellWithCommand = async (command: string, key: string, title: string) => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopiedKey(key);
+      setShellToast({
+        active: true,
+        title,
+        cmd: command,
+      });
+      window.open(PACE_SHELL_URL, '_blank', 'noopener,noreferrer');
+      setTimeout(() => setCopiedKey(null), 3500);
+      setTimeout(() => setShellToast(null), 9000);
+    } catch (err) {
+      console.error('Failed to copy to clipboard', err);
+      window.open(PACE_SHELL_URL, '_blank', 'noopener,noreferrer');
+    }
+  };
 
   const handleRefresh = () => {
     setIsLoading(true);
@@ -370,31 +394,137 @@ ${sbatchCommand}
           </div>
         </div>
 
-        <div className="hud-card">
-          <div className="hud-card-header">
-            <span>Most Budget-Friendly GPU</span>
-            <DollarSign size={18} color="var(--gt-gold)" />
+        {/* Shortcut Card 1: sinfo partition availability */}
+        <div className="hud-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div>
+            <div className="hud-card-header">
+              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Terminal size={15} color="var(--gt-gold)" />
+                <span>Check GPU Status (sinfo)</span>
+              </span>
+              <span className="badge badge-gold" style={{ fontSize: '0.68rem', padding: '2px 6px' }}>
+                Shortcut
+              </span>
+            </div>
+            <div
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.72rem',
+                background: 'rgba(0,0,0,0.4)',
+                padding: '8px 10px',
+                borderRadius: '6px',
+                border: '1px solid var(--border-subtle)',
+                color: '#e2e8f0',
+                wordBreak: 'break-all',
+                lineHeight: 1.4,
+                marginBottom: '10px'
+              }}
+              title={SINFO_CHECK_CMD}
+            >
+              <code>sinfo -o &quot;%20P %10c %10m %25F&quot; | grep -E &apos;^PARTITION|^gpu&apos;</code>
+            </div>
           </div>
-          <div className="hud-card-value">
-            <span style={{ color: 'var(--gt-gold)' }}>$0.1303</span>
-            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>/hr (Post-Oct 26)</span>
-          </div>
-          <div className="hud-card-sub">
-            <strong>RTX 6000 Ada</strong> (-12.6% price drop post-Oct 2026)
+
+          <div>
+            <button
+              className="btn btn-primary"
+              style={{
+                width: '100%',
+                fontSize: '0.8rem',
+                padding: '8px 12px',
+                justifyContent: 'center',
+                gap: '8px',
+                background: copiedKey === 'sinfo-shortcut' ? '#16a34a' : undefined
+              }}
+              onClick={() => handleOpenShellWithCommand(
+                SINFO_CHECK_CMD,
+                'sinfo-shortcut',
+                'GPU Partition sinfo Command'
+              )}
+            >
+              {copiedKey === 'sinfo-shortcut' ? (
+                <>
+                  <Check size={15} />
+                  <span>Copied! Opening Shell...</span>
+                </>
+              ) : (
+                <>
+                  <ExternalLink size={15} />
+                  <span>Open Shell &amp; Run sinfo</span>
+                </>
+              )}
+            </button>
+            <div className="hud-card-sub" style={{ textAlign: 'center', marginTop: '6px', fontSize: '0.72rem' }}>
+              Auto-copies command &bull; paste in terminal
+            </div>
           </div>
         </div>
 
-        <div className="hud-card">
-          <div className="hud-card-header">
-            <span>Flagship High-Memory GPU</span>
-            <Layers size={18} color="#c084fc" />
+        {/* Shortcut Card 2: squeue pending backlog */}
+        <div className="hud-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div>
+            <div className="hud-card-header">
+              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Layers size={15} color="#c084fc" />
+                <span>Check Queue Backlog (squeue)</span>
+              </span>
+              <span className="badge badge-blue" style={{ fontSize: '0.68rem', padding: '2px 6px', color: '#c084fc', borderColor: 'rgba(192,132,252,0.3)', background: 'rgba(192,132,252,0.1)' }}>
+                Shortcut
+              </span>
+            </div>
+            <div
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.72rem',
+                background: 'rgba(0,0,0,0.4)',
+                padding: '8px 10px',
+                borderRadius: '6px',
+                border: '1px solid var(--border-subtle)',
+                color: '#e2e8f0',
+                wordBreak: 'break-all',
+                lineHeight: 1.4,
+                marginBottom: '10px'
+              }}
+              title={SQUEUE_CHECK_CMD}
+            >
+              <code>squeue -h -t PENDING -p gpu-... | uniq -c | sort -rn</code>
+            </div>
           </div>
-          <div className="hud-card-value">
-            <span style={{ color: '#c084fc' }}>H200</span>
-            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>141 GB HBM3e</span>
-          </div>
-          <div className="hud-card-sub">
-            Current: $0.6730/hr → Post-Oct 26: $1.4135/hr
+
+          <div>
+            <button
+              className="btn btn-secondary"
+              style={{
+                width: '100%',
+                fontSize: '0.8rem',
+                padding: '8px 12px',
+                justifyContent: 'center',
+                gap: '8px',
+                borderColor: 'rgba(192,132,252,0.4)',
+                color: '#e9d5ff',
+                background: copiedKey === 'squeue-shortcut' ? '#16a34a' : 'rgba(192,132,252,0.1)'
+              }}
+              onClick={() => handleOpenShellWithCommand(
+                SQUEUE_CHECK_CMD,
+                'squeue-shortcut',
+                'GPU Pending Queue squeue Command'
+              )}
+            >
+              {copiedKey === 'squeue-shortcut' ? (
+                <>
+                  <Check size={15} />
+                  <span>Copied! Opening Shell...</span>
+                </>
+              ) : (
+                <>
+                  <ExternalLink size={15} />
+                  <span>Open Shell &amp; Run squeue</span>
+                </>
+              )}
+            </button>
+            <div className="hud-card-sub" style={{ textAlign: 'center', marginTop: '6px', fontSize: '0.72rem' }}>
+              Auto-copies command &bull; paste in terminal
+            </div>
           </div>
         </div>
       </section>
@@ -1291,6 +1421,70 @@ ${sbatchCommand}
             </div>
           </div>
         </div>
+      )}
+
+      {/* Shell Auto-Copy Floating Notification Toast */}
+      {shellToast && (
+        <aside
+          role="status"
+          aria-live="polite"
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            right: '24px',
+            zIndex: 9999,
+            background: 'rgba(15, 23, 42, 0.96)',
+            backdropFilter: 'blur(16px)',
+            border: '1px solid var(--gt-gold)',
+            borderRadius: '10px',
+            padding: '14px 18px',
+            boxShadow: '0 12px 32px rgba(0, 0, 0, 0.6), 0 0 20px rgba(234, 170, 0, 0.25)',
+            maxWidth: '460px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '12px',
+            animation: 'fadeIn 0.25s ease'
+          }}
+        >
+          <CheckCircle2 size={22} color="var(--gt-gold)" style={{ flexShrink: 0, marginTop: '2px' }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#fff', marginBottom: '3px' }}>
+              Command Copied to Clipboard!
+            </div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+              PACE Open OnDemand Shell opened in a new tab. Press <kbd style={{ background: '#1e293b', border: '1px solid #334155', padding: '1px 6px', borderRadius: '4px', color: '#f8fafc', fontWeight: 600 }}>Ctrl+V</kbd> or <kbd style={{ background: '#1e293b', border: '1px solid #334155', padding: '1px 6px', borderRadius: '4px', color: '#f8fafc', fontWeight: 600 }}>Cmd+V</kbd> inside the shell to paste &amp; run:
+            </div>
+            <div
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.72rem',
+                background: 'rgba(0,0,0,0.5)',
+                padding: '6px 8px',
+                borderRadius: '4px',
+                marginTop: '6px',
+                color: 'var(--gt-gold)',
+                wordBreak: 'break-all'
+              }}
+            >
+              {shellToast.cmd}
+            </div>
+          </div>
+          <button
+            onClick={() => setShellToast(null)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              fontSize: '1.25rem',
+              lineHeight: 1,
+              padding: '0 4px'
+            }}
+            title="Dismiss notification"
+          >
+            &times;
+          </button>
+        </aside>
       )}
     </div>
   );
