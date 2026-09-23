@@ -685,10 +685,8 @@ ${sbatchCommand}
                     value={sbatchQos}
                     onChange={(e) => setSbatchQos(e.target.value)}
                   >
-                    <option value="embers">embers (Standard PACE)</option>
-                    <option value="inferno">inferno (High Priority)</option>
-                    <option value="normal">normal</option>
-                    <option value="burst">burst</option>
+                    <option value="embers">embers</option>
+                    <option value="inferno">inferno</option>
                   </select>
                 </div>
               </div>
