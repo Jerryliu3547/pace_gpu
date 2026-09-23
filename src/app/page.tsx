@@ -92,6 +92,8 @@ export default function PaceDashboard() {
   const [sbatchWorkdir, setSbatchWorkdir] = useState<string>('/storage/project/ps-ulora-0/dliu450/MoTTT');
   const [sbatchModule, setSbatchModule] = useState<string>('anaconda3');
   const [sbatchCondaEnv, setSbatchCondaEnv] = useState<string>('mottt');
+  const [sbatchCondaParams, setSbatchCondaParams] = useState<string>('');
+  const [sbatchEnvVars, setSbatchEnvVars] = useState<string>('');
   const [sbatchCommand, setSbatchCommand] = useState<string>(
     'python experiments/gsm8k/train_full_finetune.py \\\n  --model_name_or_path meta-llama/Llama-3.2-1B \\\n  --dataset gsm8k'
   );
@@ -173,6 +175,14 @@ export default function PaceDashboard() {
     ? `#SBATCH --gres=gpu:${selectedRate.gresType || selectedRate.partition.replace('gpu-', '')}:${calcUnits}`
     : `#SBATCH -p ${selectedRate.partition}`;
 
+  const condaActivateLine = sbatchCondaParams.trim()
+    ? `conda activate ${sbatchCondaEnv} ${sbatchCondaParams.trim()}`
+    : `conda activate ${sbatchCondaEnv}`;
+
+  const envVarsBlock = sbatchEnvVars.trim()
+    ? `\n# Conda & Environment Parameters\n${sbatchEnvVars.trim()}\n`
+    : '';
+
   // Full SLURM script generator matching user's PACE specification
   const generatedSlurmScript = `#!/bin/bash
 #SBATCH -A ${sbatchAccount}
@@ -188,8 +198,8 @@ ${gresTag}
 cd ${sbatchWorkdir}
 module load ${sbatchModule}
 eval "$(conda shell.bash hook)"
-conda activate ${sbatchCondaEnv}
-
+${condaActivateLine}
+${envVarsBlock}
 ${sbatchCommand}
 `;
 
@@ -207,6 +217,8 @@ ${sbatchCommand}
     setSbatchWorkdir('/storage/project/ps-ulora-0/dliu450/MoTTT');
     setSbatchModule('anaconda3');
     setSbatchCondaEnv('mottt');
+    setSbatchCondaParams('');
+    setSbatchEnvVars('');
     setSbatchCommand('python experiments/gsm8k/train_full_finetune.py \\\n  --model_name_or_path meta-llama/Llama-3.2-1B \\\n  --dataset gsm8k');
   };
 
@@ -851,7 +863,7 @@ ${sbatchCommand}
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
                 <div className="calc-input-group">
                   <label>Module to Load</label>
                   <input
@@ -873,6 +885,62 @@ ${sbatchCommand}
                     placeholder="mottt"
                   />
                 </div>
+
+                <div className="calc-input-group">
+                  <label>Conda Environment Parameters</label>
+                  <input
+                    type="text"
+                    className="calc-input"
+                    value={sbatchCondaParams}
+                    onChange={(e) => setSbatchCondaParams(e.target.value)}
+                    placeholder="e.g. --stack, --no-capture-output"
+                  />
+                </div>
+              </div>
+
+              <div className="calc-input-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label style={{ margin: 0 }}>Conda Environment Variables / Exports (Optional)</label>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      type="button"
+                      style={{
+                        background: 'rgba(255,255,255,0.06)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '4px',
+                        color: 'var(--text-secondary)',
+                        fontSize: '0.72rem',
+                        padding: '2px 8px',
+                        cursor: 'pointer'
+                      }}
+                      onClick={() => setSbatchEnvVars(prev => prev ? `${prev}\nexport PYTHONUNBUFFERED=1` : 'export PYTHONUNBUFFERED=1')}
+                    >
+                      + PYTHONUNBUFFERED
+                    </button>
+                    <button
+                      type="button"
+                      style={{
+                        background: 'rgba(255,255,255,0.06)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '4px',
+                        color: 'var(--text-secondary)',
+                        fontSize: '0.72rem',
+                        padding: '2px 8px',
+                        cursor: 'pointer'
+                      }}
+                      onClick={() => setSbatchEnvVars(prev => prev ? `${prev}\nexport CUDA_VISIBLE_DEVICES=0` : 'export CUDA_VISIBLE_DEVICES=0')}
+                    >
+                      + CUDA_VISIBLE_DEVICES
+                    </button>
+                  </div>
+                </div>
+                <input
+                  type="text"
+                  className="calc-input"
+                  value={sbatchEnvVars}
+                  onChange={(e) => setSbatchEnvVars(e.target.value)}
+                  placeholder="e.g. export PYTHONUNBUFFERED=1 or export HF_HOME=/storage/project/..."
+                />
               </div>
 
               <div className="calc-input-group">
