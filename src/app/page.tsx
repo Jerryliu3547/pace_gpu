@@ -59,45 +59,32 @@ export default function PaceDashboard() {
   const [calcDurationType, setCalcDurationType] = useState<'hours' | 'days'>('hours');
   const [calcDurationValue, setCalcDurationValue] = useState<number>(24);
 
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+
   // Initial fetch on mount only (no background polling)
   useEffect(() => {
-    fetchClusterStatus(false);
+    fetchClusterStatus(true);
   }, []);
 
-  const fetchClusterStatus = async (forceDemo: boolean = false) => {
+  const fetchClusterStatus = async (forceDemo: boolean = true) => {
     setIsLoading(true);
     setConnectionError(null);
 
-    try {
-      const url = forceDemo ? '/api/cluster?demo=true' : '/api/cluster';
-      const res = await fetch(url, { cache: 'no-store' });
-      const data = await res.json();
-
-      if (data.connected) {
+    // Parse cluster data directly on client
+    setTimeout(() => {
+      if (forceDemo || isDemoMode) {
         setIsConnected(true);
-        setIsDemoMode(!!data.isDemo);
-        setPartitions(data.partitions || []);
-        setRawTerminalOutput(data.rawOutput || '');
+        setIsDemoMode(true);
+        setPartitions(parseSinfoOutput(DEMO_SINFO_OUTPUT));
+        setRawTerminalOutput(DEMO_SINFO_OUTPUT);
         setLastUpdated(new Date().toLocaleTimeString());
       } else {
+        // If not in demo and not pasted, prompt for connection / manual paste
         setIsConnected(false);
-        setIsDemoMode(false);
-        setConnectionError(data.error || 'Connection failed');
-        // Keep demo partitions populated if previously in demo or show empty
-        if (partitions.length === 0) {
-          // pre-parse demo for fallback display if desired
-          setPartitions(parseSinfoOutput(DEMO_SINFO_OUTPUT));
-        }
+        setConnectionError('Direct SSH execution is not supported in static browser environments. Please use Manual Paste or Open OnDemand shell.');
       }
-    } catch (err: any) {
-      setIsConnected(false);
-      setConnectionError(err.message || 'Network request failed');
-      if (partitions.length === 0) {
-        setPartitions(parseSinfoOutput(DEMO_SINFO_OUTPUT));
-      }
-    } finally {
       setIsLoading(false);
-    }
+    }, 400);
   };
 
   const handleManualPasteSubmit = () => {
@@ -983,7 +970,7 @@ nvidia-smi 2>/dev/null || lscpu
             </div>
             <div style={{ overflow: 'hidden', borderRadius: '8px', border: '1px solid var(--border-subtle)', background: '#fff' }}>
               <img
-                src="/rate-sheet-reference.png"
+                src={`${basePath}/rate-sheet-reference.png`}
                 alt="General Research [GEN] Computing (i.e. Phoenix) Rate Table"
                 style={{ width: '100%', height: 'auto', display: 'block' }}
               />
