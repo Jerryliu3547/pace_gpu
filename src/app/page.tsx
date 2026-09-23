@@ -23,12 +23,38 @@ import {
   ArrowDownRight,
   Minus,
   Eye,
+  Download,
+  RotateCcw,
+  Terminal,
 } from 'lucide-react';
 import { PACE_RATES, ComputeRate, calculateRateDelta, getRateForPartition } from '@/lib/rates';
 import { SlurmPartitionNode, DEMO_SINFO_OUTPUT, parseSinfoOutput } from '@/lib/slurm-parser';
 
 type FilterType = 'all' | 'available' | 'gpu-only' | 'cpu-only';
 type TabType = 'availability' | 'calculator' | 'rate-sheet' | 'help';
+
+function parseWalltimeToHours(walltime: string): number {
+  const trimmed = (walltime || '').trim();
+  if (trimmed.includes('-')) {
+    const [dayStr, rest] = trimmed.split('-');
+    const days = parseFloat(dayStr) || 0;
+    const parts = (rest || '').split(':').map((p) => parseFloat(p) || 0);
+    const hours = parts[0] || 0;
+    const mins = parts[1] || 0;
+    const secs = parts[2] || 0;
+    return days * 24 + hours + mins / 60 + secs / 3600;
+  }
+  if (trimmed.includes(':')) {
+    const parts = trimmed.split(':').map((p) => parseFloat(p) || 0);
+    if (parts.length === 3) {
+      return parts[0] + parts[1] / 60 + parts[2] / 3600;
+    } else if (parts.length === 2) {
+      return parts[0] + parts[1] / 60;
+    }
+  }
+  const numeric = parseFloat(trimmed);
+  return isNaN(numeric) || numeric <= 0 ? 1 : numeric;
+}
 
 export default function PaceDashboard() {
   // Navigation & view states
@@ -53,11 +79,23 @@ export default function PaceDashboard() {
   // Copy indicator state
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  // Cost Calculator States
-  const [calcPartition, setCalcPartition] = useState<string>('gpu-a100');
+  // Cost Calculator & SLURM Script Builder States
+  const [calcPartition, setCalcPartition] = useState<string>('gpu-rtxpro-blackwell');
   const [calcUnits, setCalcUnits] = useState<number>(1);
-  const [calcDurationType, setCalcDurationType] = useState<'hours' | 'days'>('hours');
-  const [calcDurationValue, setCalcDurationValue] = useState<number>(24);
+  const [sbatchAccount, setSbatchAccount] = useState<string>('paceship-ulora');
+  const [sbatchNodes, setSbatchNodes] = useState<number>(1);
+  const [sbatchCores, setSbatchCores] = useState<number>(8);
+  const [sbatchMem, setSbatchMem] = useState<string>('32G');
+  const [sbatchTime, setSbatchTime] = useState<string>('01:00:00');
+  const [sbatchQos, setSbatchQos] = useState<string>('embers');
+  const [sbatchJobName, setSbatchJobName] = useState<string>('Mottt_FT_GSM8k');
+  const [sbatchOutput, setSbatchOutput] = useState<string>('Mottt_FT_GSM8k-%j.out');
+  const [sbatchWorkdir, setSbatchWorkdir] = useState<string>('/storage/project/ps-ulora-0/dliu450/MoTTT');
+  const [sbatchModule, setSbatchModule] = useState<string>('anaconda3');
+  const [sbatchCondaEnv, setSbatchCondaEnv] = useState<string>('mottt');
+  const [sbatchCommand, setSbatchCommand] = useState<string>(
+    'python experiments/gsm8k/train_full_finetune.py \\\n  --model_name_or_path meta-llama/Llama-3.2-1B \\\n  --dataset gsm8k'
+  );
 
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
@@ -160,27 +198,65 @@ export default function PaceDashboard() {
 
   // Calculator calculations
   const selectedRate = PACE_RATES.find((r) => r.partition === calcPartition) || PACE_RATES[0];
-  const effectiveHours = calcDurationType === 'days' ? calcDurationValue * 24 : calcDurationValue;
+  const effectiveHours = parseWalltimeToHours(sbatchTime);
   const currentTotalCost = (selectedRate.currentRate * calcUnits * effectiveHours).toFixed(2);
   const futureTotalCost = (selectedRate.postOct2026Rate * calcUnits * effectiveHours).toFixed(2);
   const deltaCost = (parseFloat(futureTotalCost) - parseFloat(currentTotalCost)).toFixed(2);
   const deltaPct = calculateRateDelta(selectedRate.currentRate, selectedRate.postOct2026Rate).percentage.toFixed(1);
 
-  // SLURM template generator
-  const generatedSlurmScript = `#!/bin/bash
-#SBATCH --job-name=pace_gpu_job
-#SBATCH --partition=${selectedRate.partition}
-${selectedRate.type === 'GPU' ? `#SBATCH --gres=gpu:${calcUnits}` : `#SBATCH --nodes=1\n#SBATCH --ntasks-per-node=${calcUnits}`}
-#SBATCH --time=${calcDurationType === 'days' ? `${calcDurationValue}-00:00:00` : `${Math.floor(calcDurationValue)}:00:00`}
-#SBATCH --output=job_%j.out
-#SBATCH --error=job_%j.err
+  // Exact PACE SLURM GRES directive
+  const gresTag = selectedRate.type === 'GPU'
+    ? `#SBATCH --gres=gpu:${selectedRate.gresType || selectedRate.partition.replace('gpu-', '')}:${calcUnits}`
+    : `#SBATCH -p ${selectedRate.partition}`;
 
-echo "Starting compute job on PACE Phoenix..."
-echo "Partition: ${selectedRate.partition} | Hardware: ${selectedRate.hardwareName}"
-nvidia-smi 2>/dev/null || lscpu
-# Run your training or analysis command here:
-# python train.py
+  // Full SLURM script generator matching user's PACE specification
+  const generatedSlurmScript = `#!/bin/bash
+#SBATCH -A ${sbatchAccount}
+#SBATCH -N ${sbatchNodes}
+#SBATCH -n ${sbatchCores}
+#SBATCH --mem=${sbatchMem}
+#SBATCH -t ${sbatchTime}
+#SBATCH --qos=${sbatchQos}
+#SBATCH -J ${sbatchJobName}
+#SBATCH -o ${sbatchOutput}
+${gresTag}
+
+cd ${sbatchWorkdir}
+module load ${sbatchModule}
+eval "$(conda shell.bash hook)"
+conda activate ${sbatchCondaEnv}
+
+${sbatchCommand}
 `;
+
+  const resetToMotttExample = () => {
+    setCalcPartition('gpu-rtxpro-blackwell');
+    setCalcUnits(1);
+    setSbatchAccount('paceship-ulora');
+    setSbatchNodes(1);
+    setSbatchCores(8);
+    setSbatchMem('32G');
+    setSbatchTime('01:00:00');
+    setSbatchQos('embers');
+    setSbatchJobName('Mottt_FT_GSM8k');
+    setSbatchOutput('Mottt_FT_GSM8k-%j.out');
+    setSbatchWorkdir('/storage/project/ps-ulora-0/dliu450/MoTTT');
+    setSbatchModule('anaconda3');
+    setSbatchCondaEnv('mottt');
+    setSbatchCommand('python experiments/gsm8k/train_full_finetune.py \\\n  --model_name_or_path meta-llama/Llama-3.2-1B \\\n  --dataset gsm8k');
+  };
+
+  const handleDownloadScript = () => {
+    const blob = new Blob([generatedSlurmScript], { type: 'text/x-sh' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${sbatchJobName || 'pace_job'}.sbatch`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="app-container">
@@ -622,30 +698,74 @@ nvidia-smi 2>/dev/null || lscpu
             <div>
               <h2>
                 <Sliders size={22} color="var(--gt-gold)" />
-                PACE Phoenix SLURM Job Cost Estimator
+                PACE Phoenix SLURM Script Builder & Cost Estimator
               </h2>
-              <p>Calculate your project compute budget and compare Current Rates vs Post-Oct 1, 2026 rates.</p>
+              <p>Construct ready-to-run PACE SLURM job scripts and calculate real-time compute costs.</p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                className="btn btn-gold-outline"
+                style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                onClick={resetToMotttExample}
+                title="Load the MoTTT Blackwell fine-tuning example"
+              >
+                <RotateCcw size={14} />
+                <span>Load MoTTT Example</span>
+              </button>
             </div>
           </div>
 
           <div className="calculator-grid">
-            {/* Input Column */}
+            {/* Input Column: Form Fields */}
             <div>
+              <div className="script-section-title">
+                <Server size={15} />
+                <span>1. SLURM Allocation & Queue Directives</span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="calc-input-group">
+                  <label>PACE Account (-A)</label>
+                  <input
+                    type="text"
+                    className="calc-input"
+                    value={sbatchAccount}
+                    onChange={(e) => setSbatchAccount(e.target.value)}
+                    placeholder="paceship-ulora"
+                  />
+                </div>
+
+                <div className="calc-input-group">
+                  <label>Quality of Service (--qos)</label>
+                  <select
+                    className="calc-select"
+                    value={sbatchQos}
+                    onChange={(e) => setSbatchQos(e.target.value)}
+                  >
+                    <option value="embers">embers (Standard PACE)</option>
+                    <option value="inferno">inferno (High Priority)</option>
+                    <option value="normal">normal</option>
+                    <option value="burst">burst</option>
+                  </select>
+                </div>
+              </div>
+
               <div className="calc-input-group">
-                <label>Select Node Partition / Hardware Classification</label>
+                <label>Select GPU Architecture & Partition</label>
                 <select
                   className="calc-select"
                   value={calcPartition}
                   onChange={(e) => setCalcPartition(e.target.value)}
                 >
-                  <optgroup label="GPU Partitions">
+                  <optgroup label="GPU Nodes">
                     {PACE_RATES.filter((r) => r.type === 'GPU').map((rate) => (
                       <option key={rate.id} value={rate.partition}>
                         {rate.classification} — {rate.hardwareName} (${rate.currentRate.toFixed(4)}/hr)
                       </option>
                     ))}
                   </optgroup>
-                  <optgroup label="CPU Partitions">
+                  <optgroup label="CPU Nodes">
                     {PACE_RATES.filter((r) => r.type === 'CPU').map((rate) => (
                       <option key={rate.id} value={rate.partition}>
                         {rate.classification} — {rate.hardwareName} (${rate.currentRate.toFixed(4)}/hr)
@@ -655,9 +775,9 @@ nvidia-smi 2>/dev/null || lscpu
                 </select>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div className="calc-input-group">
-                  <label>{selectedRate.type === 'GPU' ? 'Number of GPUs' : 'Number of Cores'}</label>
+                  <label>{selectedRate.type === 'GPU' ? 'Number of GPUs (--gres)' : 'Number of Tasks (-n)'}</label>
                   <input
                     type="number"
                     min={1}
@@ -669,56 +789,183 @@ nvidia-smi 2>/dev/null || lscpu
                 </div>
 
                 <div className="calc-input-group">
-                  <label>Duration Unit</label>
-                  <select
-                    className="calc-select"
-                    value={calcDurationType}
-                    onChange={(e) => setCalcDurationType(e.target.value as 'hours' | 'days')}
-                  >
-                    <option value="hours">Hours</option>
-                    <option value="days">Days</option>
-                  </select>
+                  <label>Nodes Count (-N)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={32}
+                    className="calc-input"
+                    value={sbatchNodes}
+                    onChange={(e) => setSbatchNodes(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="calc-input-group">
+                  <label>CPU Cores per Node (-n)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={128}
+                    className="calc-input"
+                    value={sbatchCores}
+                    onChange={(e) => setSbatchCores(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  />
+                </div>
+
+                <div className="calc-input-group">
+                  <label>RAM Allocation (--mem)</label>
+                  <input
+                    type="text"
+                    className="calc-input"
+                    value={sbatchMem}
+                    onChange={(e) => setSbatchMem(e.target.value)}
+                    placeholder="32G"
+                  />
+                  <div className="input-chip-group">
+                    {['16G', '32G', '64G', '128G', '256G'].map((mem) => (
+                      <button
+                        key={mem}
+                        type="button"
+                        className={`input-chip ${sbatchMem === mem ? 'active' : ''}`}
+                        onClick={() => setSbatchMem(mem)}
+                      >
+                        {mem}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
               <div className="calc-input-group">
-                <label>Job Runtime ({calcDurationType})</label>
+                <label>Job Walltime Limit (-t)</label>
                 <input
-                  type="number"
-                  min={1}
-                  max={720}
+                  type="text"
                   className="calc-input"
-                  value={calcDurationValue}
-                  onChange={(e) => setCalcDurationValue(Math.max(1, parseFloat(e.target.value) || 1))}
+                  value={sbatchTime}
+                  onChange={(e) => setSbatchTime(e.target.value)}
+                  placeholder="01:00:00"
+                />
+                <div className="input-chip-group">
+                  {[
+                    { label: '1h', val: '01:00:00' },
+                    { label: '4h', val: '04:00:00' },
+                    { label: '12h', val: '12:00:00' },
+                    { label: '24h', val: '24:00:00' },
+                    { label: '2 Days', val: '2-00:00:00' },
+                  ].map((preset) => (
+                    <button
+                      key={preset.val}
+                      type="button"
+                      className={`input-chip ${sbatchTime === preset.val ? 'active' : ''}`}
+                      onClick={() => setSbatchTime(preset.val)}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="calc-input-group">
+                  <label>Job Name (-J)</label>
+                  <input
+                    type="text"
+                    className="calc-input"
+                    value={sbatchJobName}
+                    onChange={(e) => {
+                      const newName = e.target.value;
+                      setSbatchJobName(newName);
+                      setSbatchOutput(`${newName}-%j.out`);
+                    }}
+                    placeholder="Mottt_FT_GSM8k"
+                  />
+                </div>
+
+                <div className="calc-input-group">
+                  <label>Output Log File (-o)</label>
+                  <input
+                    type="text"
+                    className="calc-input"
+                    value={sbatchOutput}
+                    onChange={(e) => setSbatchOutput(e.target.value)}
+                    placeholder="Mottt_FT_GSM8k-%j.out"
+                  />
+                </div>
+              </div>
+
+              <div className="script-section-title" style={{ marginTop: '24px' }}>
+                <Terminal size={15} />
+                <span>2. Working Directory & Execution Setup</span>
+              </div>
+
+              <div className="calc-input-group">
+                <label>Working Directory (cd)</label>
+                <input
+                  type="text"
+                  className="calc-input"
+                  value={sbatchWorkdir}
+                  onChange={(e) => setSbatchWorkdir(e.target.value)}
+                  placeholder="/storage/project/ps-ulora-0/dliu450/MoTTT"
                 />
               </div>
 
-              {/* Hardware highlight box */}
-              <div style={{ background: 'rgba(0,0,0,0.3)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-subtle)', marginTop: '16px' }}>
-                <div style={{ fontWeight: 700, color: 'var(--gt-gold)', fontSize: '0.9rem' }}>
-                  {selectedRate.hardwareName} ({selectedRate.vramOrSpec})
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="calc-input-group">
+                  <label>Module to Load</label>
+                  <input
+                    type="text"
+                    className="calc-input"
+                    value={sbatchModule}
+                    onChange={(e) => setSbatchModule(e.target.value)}
+                    placeholder="anaconda3"
+                  />
                 </div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  {selectedRate.description}
+
+                <div className="calc-input-group">
+                  <label>Conda Environment Name</label>
+                  <input
+                    type="text"
+                    className="calc-input"
+                    value={sbatchCondaEnv}
+                    onChange={(e) => setSbatchCondaEnv(e.target.value)}
+                    placeholder="mottt"
+                  />
                 </div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '6px' }}>
-                  <strong>Recommended for:</strong> {selectedRate.recommendedFor}
-                </div>
+              </div>
+
+              <div className="calc-input-group">
+                <label>Execution Command / Python Script</label>
+                <textarea
+                  className="textarea-field"
+                  style={{ height: '100px', marginBottom: '0' }}
+                  value={sbatchCommand}
+                  onChange={(e) => setSbatchCommand(e.target.value)}
+                  placeholder="python experiments/gsm8k/train_full_finetune.py \"
+                />
               </div>
             </div>
 
-            {/* Cost Breakdown & Slurm Script Column */}
+            {/* Output Column: Live Cost Estimation & Script Preview */}
             <div>
               <div className="calc-summary-box">
                 <div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>
-                    Estimated Internal Compute Cost
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>
+                      Live Cost Estimation
+                    </div>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--gt-gold)', background: 'rgba(234,170,0,0.12)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(234,170,0,0.3)' }}>
+                      Walltime: {effectiveHours.toFixed(1)} hrs
+                    </span>
                   </div>
 
-                  <div className="cost-comparison-row" style={{ marginTop: '12px' }}>
+                  <div className="cost-comparison-row">
                     <div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Current Internal Rate</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>${selectedRate.currentRate.toFixed(4)} / {selectedRate.consumableUnit}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        ${selectedRate.currentRate.toFixed(4)} / {selectedRate.consumableUnit}
+                      </div>
                     </div>
                     <div className="cost-val" style={{ color: '#38bdf8' }}>${currentTotalCost}</div>
                   </div>
@@ -726,7 +973,9 @@ nvidia-smi 2>/dev/null || lscpu
                   <div className="cost-comparison-row">
                     <div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Post-Oct 1, 2026 Rate</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>${selectedRate.postOct2026Rate.toFixed(4)} / {selectedRate.consumableUnit}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        ${selectedRate.postOct2026Rate.toFixed(4)} / {selectedRate.consumableUnit}
+                      </div>
                     </div>
                     <div className="cost-val" style={{ color: 'var(--gt-gold)' }}>${futureTotalCost}</div>
                   </div>
@@ -749,17 +998,30 @@ nvidia-smi 2>/dev/null || lscpu
                 </div>
 
                 <div style={{ marginTop: '20px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Generated SLURM Job Script</span>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ fontSize: '0.7rem', padding: '2px 8px' }}
-                      onClick={() => handleCopy(generatedSlurmScript, 'slurm-script')}
-                    >
-                      {copiedKey === 'slurm-script' ? <Check size={12} /> : <Copy size={12} />}
-                      <span>{copiedKey === 'slurm-script' ? 'Copied' : 'Copy Script'}</span>
-                    </button>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 700 }}>
+                      Generated SLURM Job Script
+                    </span>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                        className="btn btn-secondary"
+                        style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                        onClick={() => handleCopy(generatedSlurmScript, 'slurm-script')}
+                      >
+                        {copiedKey === 'slurm-script' ? <Check size={12} /> : <Copy size={12} />}
+                        <span>{copiedKey === 'slurm-script' ? 'Copied' : 'Copy Script'}</span>
+                      </button>
+                      <button
+                        className="btn btn-primary"
+                        style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                        onClick={handleDownloadScript}
+                      >
+                        <Download size={12} />
+                        <span>Download .sbatch</span>
+                      </button>
+                    </div>
                   </div>
+
                   <pre className="code-snippet-box">
                     <code>{generatedSlurmScript}</code>
                   </pre>
